@@ -87,6 +87,8 @@ class GameConfig:
     black_is_human: bool = False
     red_max_tokens: int = 0
     black_max_tokens: int = 0
+    red_temperature: float = 0.7
+    black_temperature: float = 0.7
 
 
 def auto_max_tokens(model: str) -> int:

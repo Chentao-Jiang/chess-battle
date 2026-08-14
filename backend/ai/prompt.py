@@ -20,6 +20,8 @@ def build_legal_moves_text(board, legal_moves, side=None):
         notation = to_chinese(board, fc, fr, tc, tr, side) if side else ""
         entry = f"[{fc},{fr}]→[{tc},{tr}]{name}，{notation}" if notation else f"[{fc},{fr}]→[{tc},{tr}]{name}"
         if target:
+            captures.append(entry if notation else f"{entry}吃{tname}")
+        else:
             movements.append(entry)
     parts = []
     if captures:
@@ -65,8 +67,10 @@ def build_prompt(board, side, move_history: list = None, attempt: int = 1,
                  legal_moves: list = None, knowledge_text: str = "",
                  memory_context: str = "", prethought: str = "", model: str = ""):
     """Minimal passive prompt. Includes board image for vision models."""
+    from engine.analysis import build_tactical_hints
     pieces = build_json_pieces(board)
     side_name = "黑方" if side == BLACK else "红方"
+    hints = build_tactical_hints(board, legal_moves, side) if legal_moves else ""
 
     system_msg = f"""{side_name}象棋AI。从合法走法列表中凭棋感选择最优一步。
 
@@ -110,6 +114,8 @@ def build_prompt(board, side, move_history: list = None, attempt: int = 1,
         blocks.append(knowledge_text)
     blocks.append(history_text.strip())
     blocks.append(f"局面: {json.dumps(pieces, ensure_ascii=False)}")
+    if hints:
+        blocks.append(hints)
     blocks.append(legal_text)
     blocks.append("直接从上方列表复制一行坐标到JSON输出。不要自行换算路数。")
 
@@ -131,7 +137,13 @@ def build_prompt(board, side, move_history: list = None, attempt: int = 1,
 def build_agent_system_prompt(context) -> str:
     side_name = "黑方" if context.side == BLACK else "红方"
     remaining_min = int(context.remaining_seconds / 60)
-    return f"""{side_name}象棋AI。剩{remaining_min}分钟。分析后submit_move。
+    return f"""{side_name}象棋AI。剩{remaining_min}分钟。
+
+## 决策流程（重要）
+1. 先阅读局面、引擎战术提示和历史棋谱，评估双方攻防要点
+2. 用 simulate_move 推演 1-2 个候选走法及对手最可能的回应
+3. 权衡后调用 submit_move 提交最终走法
+你拥有充分的时间思考，请认真分析后再提交。
 
 铁律: 直接从合法走法列表复制坐标到submit_move！禁止自行换算路数！
 坐标: col0-8左→右, row0-9上→下, 黑row0-4,红row5-9。黑col0=1路,col8=9路。红col0=9路,col8=1路。
@@ -140,9 +152,10 @@ def build_agent_system_prompt(context) -> str:
 工具: simulate_move|reset_simulation|submit_move"""
 
 
-def build_agent_user_message(context) -> str:
+def build_agent_user_message(context):
     import json as _json
     from ai.knowledge import select_knowledge
+    from engine.analysis import build_tactical_hints
 
     pieces = build_json_pieces(context.board)
     legal_text = build_legal_moves_text(context.board, context.legal_moves, context.side)
@@ -152,46 +165,34 @@ def build_agent_user_message(context) -> str:
     history_text = ""
     if context.move_history:
         items = []
-        for m in context.move_history[-8:]:
+        for m in context.move_history[-20:]:
             side_label = "红" if m['side'] == 'red' else '黑'
-            fc = m.get('from', [None, None])[0] if m.get('from') else None
-            if fc is not None:
-                items.append(f"{m['move_num']}.{side_label}:{m['chinese']}")
-            else:
-                items.append(f"{m['move_num']}.{side_label}:{m['chinese']}")
+            items.append(f"{m['move_num']}.{side_label}:{m['chinese']}")
         history_text = " ".join(items) + "\n"
 
-    # Pre-inject compact context so model can submit_move directly
     knowledge = select_knowledge(context.board, context.side)
-    mem_ctx = ""
-    if context.memory:
-        mem_ctx = context.memory.to_context()
-    pre = context.prethought or ""
+    mem_ctx = context.memory.to_context() if context.memory else ""
+    pre = f"【预分析】{context.prethought[:600]}" if context.prethought else ""
+
+    hints = build_tactical_hints(context.board, context.legal_moves, context.side)
 
     context_block = ""
-    if mem_ctx or pre or knowledge:
-        parts = []
-        if mem_ctx:
-            parts.append(mem_ctx)
-        if pre:
-            parts.append(pre)
-        if knowledge:
-            parts.append(knowledge[:400])
+    parts = [p for p in (mem_ctx, pre, knowledge[:800] if knowledge else "") if p]
+    if parts:
         context_block = "\n".join(parts) + "\n"
 
-    return f"""{side_name}。{time_str}。第{context.move_count + 1}步。
+    msg = f"""{side_name}。{time_str}。第{context.move_count + 1}步。
 
 {context_block}
 {history_text}
 局面: {_json.dumps(pieces, ensure_ascii=False)}
 
+{hints}
+
 走法 ({len(context.legal_moves)}):
 {legal_text}
 
-选一步，直接 submit_move。"""
-
-    if context.prethought:
-        msg += f"\n【预分析】{context.prethought}"
+请分析局面，可用 simulate_move 推演候选走法，确定最佳选择后调用 submit_move。"""
 
     if context.model and _is_multimodal(context.model):
         return get_content_format(context.model, msg, context.board)

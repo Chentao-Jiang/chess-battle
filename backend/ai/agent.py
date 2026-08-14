@@ -114,12 +114,23 @@ class ToolCallingAgent:
                         messages=messages,
                     )
 
-            elif response.content and iteration == 0:
-                return AgentResult(
-                    mode="fallback",
-                    fallback_text=response.content,
-                    messages=messages,
-                )
+            elif response.content:
+                # Model replied with plain text instead of calling tools.
+                # Nudge it once to use submit_move instead of dropping to fallback.
+                messages.append({
+                    "role": "assistant",
+                    "content": response.content,
+                })
+                messages.append({
+                    "role": "user",
+                    "content": "请通过调用 submit_move 工具提交你的最终走法（坐标从合法走法列表复制）。如需推演可先调用 simulate_move。",
+                })
+                if iteration >= self.max_iterations - 1:
+                    return AgentResult(
+                        mode="fallback",
+                        fallback_text=response.content,
+                        messages=messages,
+                    )
 
         return self._fallback(messages, "max iterations reached")
 

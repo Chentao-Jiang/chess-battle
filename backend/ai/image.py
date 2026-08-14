@@ -6,14 +6,19 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 def _is_multimodal(model: str) -> bool:
-    """Check if model likely supports image input."""
+    """Check if model likely supports image input.
+
+    Substring matching pitfalls: keep entries specific (e.g. 'kimi-k2' not 'k2');
+    text-only models like deepseek-v4 must NOT appear here.
+    """
     m = model.lower()
     return any(v in m for v in [
         'gpt-4o', 'gpt-4-turbo', 'gpt-4-vision', 'gpt-4.5',
-        'claude-3', 'claude-3.5', 'claude-4',
-        'gemini', 'qwen-vl', 'qwen2.5-vl',
-        'glm-4v', 'glm-5', 'kimi', 'k2',
-        'deepseek-v4', 'vision',
+        'claude-3', 'claude-4',
+        'gemini', 'qwen-vl', 'qwen2-vl', 'qwen2.5-vl', 'qvq',
+        'glm-4v', 'glm-4.5v', 'glm-5v',
+        'kimi-latest', 'kimi-k2', 'step-3',
+        'vision', '-vl', 'multimodal',
     ])
 
 
@@ -32,8 +37,13 @@ def get_content_format(model: str, text: str, board) -> list | str:
 
 
 def render_board_png(board) -> str:
-    """Render board as PNG, return base64-encoded string."""
-    CELL, PAD, R = 60, 35, 24
+    """Render board as PNG, return base64-encoded string.
+
+    Coordinates match the engine convention: col 0-8 left→right,
+    row 0-9 top(black base)→bottom(red base). Labels are drawn so a
+    vision model can map each piece back to [col,row].
+    """
+    CELL, PAD, R = 60, 45, 24
     W, H = PAD * 2 + CELL * 8, PAD * 2 + CELL * 9
 
     img = Image.new('RGB', (W, H), '#f0d9a0')
@@ -41,18 +51,42 @@ def render_board_png(board) -> str:
 
     # Try to load a CJK font, fall back gracefully
     font = None
-    for fp in ['/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-               '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-               '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-               '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc']:
+    for fp in [
+        'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/simhei.ttf',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/usr/share/fonts/wqy/wqy-zenhei.ttc',
+    ]:
         try: font = ImageFont.truetype(fp, 18); break
         except: pass
     if font is None:
         try: font = ImageFont.load_default()
         except: pass
+    label_font = None
+    for fp in ['C:/Windows/Fonts/consola.ttf', 'C:/Windows/Fonts/arial.ttf']:
+        try: label_font = ImageFont.truetype(fp, 16); break
+        except: pass
+    if label_font is None:
+        label_font = font
+
+    line_color = '#4a2f1a'
+
+    def _draw_label(x, y, text, anchor='mm'):
+        if label_font:
+            draw.text((x, y), text, fill=line_color, font=label_font, anchor=anchor)
+
+    # Coordinate labels: cols top+bottom, rows left+right
+    for c in range(9):
+        x = PAD + c * CELL
+        _draw_label(x, PAD // 2, str(c))
+        _draw_label(x, H - PAD // 2, str(c))
+    for r in range(10):
+        y = PAD + r * CELL
+        _draw_label(PAD // 2, y, str(r))
+        _draw_label(W - PAD // 2, y, str(r))
 
     # Grid lines
-    line_color = '#4a2f1a'
     for i in range(10):
         sw = 2 if i in (4, 5) else 1
         draw.line([(PAD, PAD + i * CELL), (PAD + 8 * CELL, PAD + i * CELL)], fill=line_color, width=sw)

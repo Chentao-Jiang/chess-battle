@@ -21,14 +21,21 @@ logger = logging.getLogger(__name__)
 
 
 def parse_move_response(text: str) -> dict | None:
-    """Extract from/to coordinates from AI response. Skips template/example JSONs."""
+    """Extract from/to coordinates from AI response. Skips template/example JSONs.
+
+    Scans matches in reverse order so JSON appearing in chain-of-thought examples
+    (early in the text) is ignored in favor of the final decision (later in the text).
+    """
+    # For reasoning models, prefer the text after the final-decision marker if present
+    if "【最终决策】" in text:
+        text = text.split("【最终决策】", 1)[1]
     patterns = [
         r'```json\s*\n?(.*?)```',
         r'```\s*\n?(\{.*?\})\n?```',
         r'\{[^{}]*"from"\s*:\s*\[[^\]]*\][^{}]*"to"\s*:\s*\[[^\]]*\][^{}]*\}',
     ]
     for pattern in patterns:
-        for match in re.finditer(pattern, text, re.DOTALL | re.IGNORECASE):
+        for match in reversed(list(re.finditer(pattern, text, re.DOTALL | re.IGNORECASE))):
             try:
                 raw = match.group(1) if match.lastindex and match.lastindex >= 1 else match.group(0)
                 data = json.loads(raw)
@@ -265,7 +272,8 @@ class BattleController:
                     mt = self.state.config.red_max_tokens if side == RED else self.state.config.black_max_tokens
                     if mt <= 0:
                         mt = auto_max_tokens(model)
-                    client = AIClient(base_url, model, api_key, mt)
+                    temp = self.state.config.red_temperature if side == RED else self.state.config.black_temperature
+                    client = AIClient(base_url, model, api_key, mt, temperature=temp)
                     move_start = time.time()
 
                     prethought = self._collect_prethought(side)
@@ -539,4 +547,19 @@ class BattleController:
                     move_result=f"API错误: {str(e)[:80]}",
                     timestamp=time.time(),
                 )
+
+        # === Phase 3: Engine-picked move of last resort (avoid forfeiting on format failures) ===
+        from engine.analysis import best_fallback_move
+        best = best_fallback_move(self.state.board, legal_moves, side)
+        if best:
+            (fc, fr), (tc, tr) = best
+            piece = self.state.board[fr][fc]
+            conv = AIConversation(
+                messages=[],
+                response=f"[引擎兜底] LLM多次未能返回合法走法，由引擎按战术评分选择: ({fc},{fr})→({tc},{tr}) {CHINESE.get(piece, '')}",
+                move_result=f"引擎兜底: ({fc},{fr})→({tc},{tr})",
+                timestamp=time.time(),
+            )
+            logger.warning(f"LLM failed {max_retries} attempts; engine fallback move ({fc},{fr})->({tc},{tr})")
+            return (fc, fr, tc, tr, conv, None)
         return (None, None, None, None, last_conv, None)

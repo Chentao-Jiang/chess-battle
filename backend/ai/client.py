@@ -1,4 +1,5 @@
 """Generic LLM API client compatible with OpenAI format."""
+import asyncio
 import httpx
 import json
 import logging
@@ -20,8 +21,29 @@ async def shutdown_clients():
 def _get_client(base_url: str) -> httpx.AsyncClient:
     """Get or create a connection pool for this base_url."""
     if base_url not in _client_pools:
-        _client_pools[base_url] = httpx.AsyncClient(timeout=1800)
+        timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+        _client_pools[base_url] = httpx.AsyncClient(timeout=timeout)
     return _client_pools[base_url]
+
+
+async def _post_with_retry(client: httpx.AsyncClient, url: str, *, json_body: dict, headers: dict,
+                           max_retries: int = 2) -> httpx.Response:
+    """POST with exponential backoff on 429/5xx/network errors. 400 is never retried."""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = await client.post(url, json=json_body, headers=headers)
+            if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+                continue
+            return resp
+        except (httpx.TransportError, httpx.TimeoutException) as e:
+            last_exc = e
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+    raise last_exc  # unreachable
 
 
 @dataclass
@@ -35,7 +57,8 @@ class AIResponse:
 
 
 class AIClient:
-    def __init__(self, base_url: str, model: str, api_key: str, max_tokens: int = 65536):
+    def __init__(self, base_url: str, model: str, api_key: str, max_tokens: int = 65536,
+                 temperature: float = 0.7):
         # Normalize: strip trailing slashes and /v1 suffix (client appends its own /v1)
         url = base_url.rstrip('/')
         if url.endswith('/v1'):
@@ -44,11 +67,14 @@ class AIClient:
         self.model = model
         self.api_key = api_key
         self.default_max_tokens = max_tokens
+        self.temperature = temperature
 
-    async def chat(self, messages: list[dict], temperature: float = 1.0, max_tokens: int = 0) -> str:
+    async def chat(self, messages: list[dict], temperature: float | None = None, max_tokens: int = 0) -> str:
         """Simple chat without tool-calling. Uses instance default if max_tokens=0."""
         if max_tokens <= 0:
             max_tokens = self.default_max_tokens
+        if temperature is None:
+            temperature = self.temperature
         url = f"{self.base_url}/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -61,7 +87,7 @@ class AIClient:
             "max_tokens": max_tokens,
         }
         client = _get_client(self.base_url)
-        resp = await client.post(url, json=payload, headers=headers)
+        resp = await _post_with_retry(client, url, json_body=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
@@ -73,10 +99,12 @@ class AIClient:
 
     async def chat_with_tools(
         self, messages: list[dict], tools: list[dict] | None = None,
-        temperature: float = 1.0, max_tokens: int = 0,
+        temperature: float | None = None, max_tokens: int = 0,
     ) -> AIResponse:
         if max_tokens <= 0:
             max_tokens = self.default_max_tokens
+        if temperature is None:
+            temperature = self.temperature
         """Chat with OpenAI-compatible function calling (tools).
         Note: DeepSeek V4 thinking mode rejects tool_choice, so we omit it.
         """
@@ -96,7 +124,7 @@ class AIClient:
             # NOTE: Do NOT send tool_choice — DeepSeek V4 thinking mode rejects it (400)
 
         client = _get_client(self.base_url)
-        resp = await client.post(url, json=payload, headers=headers)
+        resp = await _post_with_retry(client, url, json_body=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
