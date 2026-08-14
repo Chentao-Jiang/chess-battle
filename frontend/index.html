@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中国象棋 AI 对战</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'PingFang SC','Microsoft YaHei',sans-serif; background:#1a1a2e; color:#eee; min-height:100vh; }
+  .header { background:#16213e; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid #e2b857; flex-wrap:wrap; gap:8px; }
+  .header h1 { font-size:20px; color:#e2b857; }
+  .controls { display:flex; gap:12px; align-items:center; }
+  .btn { padding:6px 16px; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:bold; color:#fff; }
+  .btn-start { background:#27ae60; }
+  .btn-stop { background:#e74c3c; }
+  .btn-reset { background:#7f8c8d; }
+  .btn-debug { background:#8e44ad; }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .main { display:flex; gap:16px; padding:16px; max-width:1200px; margin:0 auto; align-items:flex-start; }
+  .board-section { flex:1; display:flex; justify-content:center; }
+  #board-svg { cursor:pointer; }
+  #pieces-layer circle, #pieces-layer text { pointer-events:none; }
+  .side-panel { width:300px; display:flex; flex-direction:column; gap:12px; }
+  .player-card { background:#16213e; padding:12px; border-radius:8px; }
+  .player-card.black { border-left:4px solid #555; }
+  .player-card.red { border-left:4px solid #cc0000; }
+  .player-card .label { font-size:11px; color:#888; margin-bottom:4px; }
+  .player-card .model { font-size:14px; font-weight:bold; }
+  .player-card .status { font-size:11px; color:#aaa; margin-top:4px; }
+  .player-card .status.thinking { color:#e2b857; }
+  .timer { font-family:monospace; font-size:20px; margin-top:6px; color:#e2b857; }
+  .timer.warning { color:#e74c3c; }
+  .move-log { background:#16213e; padding:12px; border-radius:8px; min-height:200px; max-height:300px; overflow-y:auto; }
+  .move-log h3 { font-size:12px; color:#888; margin-bottom:8px; }
+  .move-log .entry { font-size:12px; font-family:monospace; padding:3px 0; border-bottom:1px solid #222; }
+  .move-log .entry.red { color:#ff6b6b; }
+  .move-log .entry.black { color:#74b9ff; }
+  .move-log .entry.system { color:#fdcb6e; }
+  .config-panel { background:#16213e; padding:12px; border-radius:8px; }
+  .config-panel h3 { font-size:14px; color:#e2b857; margin-bottom:8px; }
+  .config-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .config-group label { display:block; font-size:10px; color:#888; margin-bottom:2px; }
+  .config-group input { width:100%; padding:4px 6px; border:1px solid #333; border-radius:4px; background:#0d1b2a; color:#eee; font-size:11px; }
+  .btn-save { width:100%; margin-top:8px; background:#3498db; }
+  .debug-btn-row { display:flex; gap:8px; margin-top:4px; }
+  .btn-view-debug { font-size:10px; padding:3px 8px; background:#6c3483; color:#fff; border:none; border-radius:4px; cursor:pointer; }
+
+  /* Game record modal styles */
+  .record-container { display:flex; gap:12px; height:70vh; }
+  .record-list { width:220px; overflow-y:auto; flex-shrink:0; background:#0d1b2a; border-radius:8px; padding:8px; }
+  .record-item { padding:8px 10px; border-radius:6px; cursor:pointer; font-size:12px; margin-bottom:2px; transition:background 0.15s; }
+  .record-item:hover { background:#1a2744; }
+  .record-item.active { background:#2d6a4f; color:#a7f3d0; }
+  .record-item .move-num { font-weight:bold; color:#e2b857; }
+  .record-item .move-text { color:#ccc; }
+  .record-board { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .record-board svg { border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.4); }
+  .record-move-info { margin-top:12px; font-size:14px; color:#e2b857; text-align:center; }
+  .record-nav { display:flex; gap:8px; margin-top:8px; }
+  .record-nav button { padding:4px 12px; background:#3498db; border:none; border-radius:4px; color:#fff; cursor:pointer; font-size:12px; }
+  .record-nav button:disabled { opacity:0.4; cursor:not-allowed; }
+  @media (max-width: 800px) { .main { flex-direction:column; } .side-panel { width:100%; } }
+
+  /* Debug modal */
+  .modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:1000; }
+  .modal-overlay.active { display:block; }
+  .modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#16213e; border:1px solid #333; border-radius:12px; width:90%; max-width:800px; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; }
+  .modal-header { padding:12px 16px; border-bottom:1px solid #333; display:flex; justify-content:space-between; align-items:center; }
+  .modal-header h3 { font-size:16px; color:#e2b857; }
+  .modal-close { background:none; border:none; color:#888; font-size:24px; cursor:pointer; }
+  .modal-body { padding:16px; overflow-y:auto; flex:1; }
+  .conv-entry { background:#0d1b2a; border-radius:8px; padding:12px; margin-bottom:12px; }
+  .conv-entry .header { font-size:12px; color:#888; margin-bottom:8px; }
+  .conv-entry .prompt { font-size:11px; color:#ccc; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin-bottom:8px; background:#1a1a2e; padding:8px; border-radius:4px; }
+  .conv-entry .response { font-size:11px; color:#e2b857; white-space:pre-wrap; background:#1a1a2e; padding:8px; border-radius:4px; }
+  .conv-entry .result { font-size:11px; color:#2ecc71; margin-top:4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>象棋 AI 对战</h1>
+  <div class="controls">
+    <button class="btn btn-start" id="btn-start" onclick="startGame()">开始</button>
+    <button class="btn btn-stop" id="btn-stop" onclick="stopGame()" disabled>停止</button>
+    <button class="btn btn-reset" onclick="resetGame()">重置</button>
+    <button class="btn btn-debug" onclick="showGameRecord()">查看棋谱</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="board-section">
+    <svg id="board-svg" width="520" height="620" viewBox="0 0 520 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="shadow" x="-10%" y="-5%" width="120%" height="115%">
+          <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.4"/>
+        </filter>
+      </defs>
+      <rect width="520" height="620" rx="10" fill="#a07840"/>
+      <rect x="20" y="20" width="480" height="580" rx="8" fill="#e2c48a"/>
+      <rect x="30" y="30" width="460" height="560" rx="6" fill="#f0d9a0"/>
+      <g id="grid-layer"></g>
+      <g id="pieces-layer"></g>
+    </svg>
+  </div>
+  <div class="side-panel">
+    <div class="config-panel">
+      <h3>⚙️ 模型配置</h3>
+      <div class="config-grid">
+        <div class="config-group">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <label style="font-size:13px;font-weight:bold;color:#ff6b6b;cursor:pointer">
+              <input type="checkbox" id="red-human" onchange="toggleHuman('red')" style="margin-right:4px">🔴 人类玩家
+            </label>
+          </div>
+          <div id="red-ai-fields">
+            <div style="font-size:13px;font-weight:bold;color:#ff6b6b;margin-bottom:4px">🔴 AI玩家配置:</div>
+            <input id="red-url" placeholder="https://api.openai.com" value="https://api.openai.com">
+            <input id="red-model" placeholder="模型名称" style="margin-top:3px">
+            <input id="red-key" type="password" placeholder="API Key" style="margin-top:3px">
+          </div>
+          <div id="red-human-label" style="display:none;font-size:13px;font-weight:bold;color:#ff6b6b;padding:4px 0">🔴 人类玩家</div>
+        </div>
+        <div class="config-group">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <label style="font-size:13px;font-weight:bold;color:#74b9ff;cursor:pointer">
+              <input type="checkbox" id="black-human" onchange="toggleHuman('black')" style="margin-right:4px">⚫ 人类玩家
+            </label>
+          </div>
+          <div id="black-ai-fields">
+            <div style="font-size:13px;font-weight:bold;color:#74b9ff;margin-bottom:4px">⚫ AI玩家配置:</div>
+            <input id="black-url" placeholder="https://api.example.com">
+            <input id="black-model" placeholder="模型名称" style="margin-top:3px">
+            <input id="black-key" type="password" placeholder="API Key" style="margin-top:3px">
+          </div>
+          <div id="black-human-label" style="display:none;font-size:13px;font-weight:bold;color:#74b9ff;padding:4px 0">⚫ 人类玩家</div>
+        </div>
+      </div>
+      <button class="btn btn-save" onclick="saveConfig()">保存配置</button>
+    </div>
+    <div class="player-card black">
+      <div class="label">⚫ 黑方</div>
+      <div class="model" id="black-model-display">未配置</div>
+      <div class="timer" id="black-timer">30:00</div>
+      <div class="debug-btn-row">
+        <button class="btn-view-debug" onclick="showDebugModal('black')">查看后台对话</button>
+      </div>
+      <div class="status" id="black-status">等待开始</div>
+    </div>
+    <div class="player-card red">
+      <div class="label">🔴 红方</div>
+      <div class="model" id="red-model-display">未配置</div>
+      <div class="timer" id="red-timer">30:00</div>
+      <div class="debug-btn-row">
+        <button class="btn-view-debug" onclick="showDebugModal('red')">查看后台对话</button>
+      </div>
+      <div class="status" id="red-status">等待开始</div>
+    </div>
+    <div class="move-log">
+      <h3>📋 对战日志 (<span id="move-count">0</span> 回合)</h3>
+      <div id="log-entries"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Game Record Modal -->
+<div class="modal-overlay" id="record-modal">
+  <div class="modal" style="max-width:900px">
+    <div class="modal-header">
+      <h3 id="modal-title">棋谱</h3>
+      <button class="modal-close" onclick="closeGameRecord()">&times;</button>
+    </div>
+    <div class="modal-body" id="record-body">
+      <div class="record-container">
+        <div class="record-list" id="record-list"></div>
+        <div class="record-board">
+          <svg id="record-board-svg" width="480" height="580" viewBox="0 0 480 580" xmlns="http://www.w3.org/2000/svg">
+            <rect width="480" height="580" rx="10" fill="#a07840"/>
+            <rect x="20" y="20" width="440" height="540" rx="8" fill="#e2c48a"/>
+            <rect x="30" y="30" width="420" height="520" rx="6" fill="#f0d9a0"/>
+            <g id="record-grid"></g>
+            <g id="record-pieces"></g>
+          </svg>
+          <div class="record-nav">
+            <button id="btn-prev" onclick="recordPrev()">&lt; 上一手</button>
+            <button id="btn-next" onclick="recordNext()">下一手 &gt;</button>
+          </div>
+          <div class="record-move-info" id="record-info">初始局面</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Debug Modal (AI conversations) -->
+<div class="modal-overlay" id="debug-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title-debug">AI 后台对话</h3>
+      <button class="modal-close" onclick="closeDebugModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+const COL_X = [60,110,160,210,260,310,360,410,460];
+const ROW_Y = [50,100,150,200,250,300,350,400,450,500];
+const CHINESE = {
+  'r':'車','n':'馬','b':'象','a':'士','k':'將','c':'砲','p':'卒',
+  'R':'俥','N':'傌','B':'相','A':'仕','K':'帥','C':'炮','P':'兵'
+};
+
+const STORAGE_KEY = 'chess-battle-config';
+function loadLocalConfig() {
+  try { const s = localStorage.getItem(STORAGE_KEY); if (s) return JSON.parse(s); } catch {} return {};
+}
+function saveLocalConfig() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    red_url: document.getElementById('red-url').value,
+    red_model: document.getElementById('red-model').value,
+    red_key: document.getElementById('red-key').value,
+    black_url: document.getElementById('black-url').value,
+    black_model: document.getElementById('black-model').value,
+    black_key: document.getElementById('black-key').value,
+    red_is_human: document.getElementById('red-human').checked,
+    black_is_human: document.getElementById('black-human').checked,
+  }));
+}
+function toggleHuman(side) {
+  const checked = document.getElementById(side + '-human').checked;
+  document.getElementById(side + '-ai-fields').style.display = checked ? 'none' : 'block';
+  document.getElementById(side + '-human-label').style.display = checked ? 'block' : 'none';
+}
+function applyConfigToUI(cfg) {
+  if (cfg.red_is_human) { document.getElementById('red-human').checked = true; toggleHuman('red'); }
+  if (cfg.black_is_human) { document.getElementById('black-human').checked = true; toggleHuman('black'); }
+  if (cfg.red_url) document.getElementById('red-url').value = cfg.red_url;
+  if (cfg.red_model) document.getElementById('red-model').value = cfg.red_model;
+  if (cfg.red_key) document.getElementById('red-key').value = cfg.red_key;
+  if (cfg.black_url) document.getElementById('black-url').value = cfg.black_url;
+  if (cfg.black_model) document.getElementById('black-model').value = cfg.black_model;
+  if (cfg.black_key) document.getElementById('black-key').value = cfg.black_key;
+  document.getElementById('red-model-display').textContent = cfg.red_is_human ? '人类玩家' : (cfg.red_model || '未配置');
+  document.getElementById('black-model-display').textContent = cfg.black_is_human ? '人类玩家' : (cfg.black_model || '未配置');
+}
+
+let ws = null;
+let lastMove = null;
+let selectedPiece = null;
+let showLegalMoves = [];
+let storeState = null;
+
+function drawGrid() {
+  let g = document.getElementById('grid-layer');
+  let h = '';
+  for (let i = 0; i < 10; i++) {
+    let sw = (i === 4 || i === 5) ? 2 : 1.2;
+    h += `<line x1="60" y1="${ROW_Y[i]}" x2="460" y2="${ROW_Y[i]}" stroke="#4a2f1a" stroke-width="${sw}"/>`;
+  }
+  h += `<line x1="60" y1="50" x2="60" y2="500" stroke="#4a2f1a" stroke-width="2"/>`;
+  h += `<line x1="460" y1="50" x2="460" y2="500" stroke="#4a2f1a" stroke-width="2"/>`;
+  for (let ci = 1; ci <= 7; ci++) {
+    h += `<line x1="${COL_X[ci]}" y1="50" x2="${COL_X[ci]}" y2="250" stroke="#4a2f1a" stroke-width="1"/>`;
+    h += `<line x1="${COL_X[ci]}" y1="300" x2="${COL_X[ci]}" y2="500" stroke="#4a2f1a" stroke-width="1"/>`;
+  }
+  h += `<line x1="210" y1="50" x2="310" y2="150" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="310" y1="50" x2="210" y2="150" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="210" y1="400" x2="310" y2="500" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="310" y1="400" x2="210" y2="500" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<text x="155" y="279" font-size="22" fill="#4a2f1a" font-family="KaiTi,STKaiti,serif" font-weight="bold">楚 河</text>`;
+  h += `<text x="305" y="279" font-size="22" fill="#4a2f1a" font-family="KaiTi,STKaiti,serif" font-weight="bold">汉 界</text>`;
+  const stars = [[1,2],[7,2],[1,7],[7,7],[0,3],[2,3],[4,3],[6,3],[8,3],[0,6],[2,6],[4,6],[6,6],[8,6]];
+  for (const [ci,ri] of stars) {
+    const x = COL_X[ci], y = ROW_Y[ri];
+    h += `<g transform="translate(${x},${y})" stroke="#4a2f1a" stroke-width="1.2" fill="none" stroke-linecap="round">`;
+    h += `<path d="M-6,-7 L-6,-3 M-7,-6 L-3,-6 M6,-7 L6,-3 M7,-6 L3,-6 M-6,3 L-6,7 M-7,6 L-3,6 M6,3 L6,7 M7,6 L3,6"/>`;
+    h += `</g>`;
+  }
+  g.innerHTML = h;
+}
+
+function renderBoard(board, move, highlights) {
+  // highlights: {selected:[fc,fr], moves:[[fc,fr,tc,tr],...]}
+  const layer = document.getElementById('pieces-layer');
+  let h = '';
+  // Draw move highlights
+  if (highlights && highlights.moves) {
+    for (const [fc, fr, tc, tr] of highlights.moves) {
+      const x = COL_X[tc], y = ROW_Y[tr];
+      h += `<circle cx="${x}" cy="${y}" r="17" fill="none" stroke="#2ecc71" stroke-width="3" stroke-dasharray="6,3" opacity="0.6"/>`;
+    }
+  }
+  // Draw selection highlight
+  if (highlights && highlights.selected) {
+    const sx = COL_X[highlights.selected[0]], sy = ROW_Y[highlights.selected[1]];
+    h += `<circle cx="${sx}" cy="${sy}" r="20" fill="none" stroke="#f39c12" stroke-width="3"/>`;
+  }
+  // Draw pieces
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 9; c++) {
+      const piece = board[r] && board[r][c];
+      if (piece) {
+        const x = COL_X[c], y = ROW_Y[r];
+        const isRed = piece === piece.toUpperCase();
+        const stroke = isRed ? '#cc0000' : '#1a1a1a';
+        const cn = CHINESE[piece] || piece;
+        let extraStroke = '';
+        if (move) {
+          if (c === move.fc && r === move.fr) extraStroke = ' stroke="#f39c12" stroke-width="3"';
+          if (c === move.tc && r === move.tr) extraStroke = ' stroke="#2ecc71" stroke-width="3"';
+        }
+        h += `<circle cx="${x}" cy="${y}" r="17" fill="#f5e6c8" stroke="${stroke}" stroke-width="2.5"${extraStroke} filter="url(#shadow)"/>`;
+        h += `<text x="${x}" y="${y}" font-size="16" fill="${stroke}" font-family="KaiTi,STKaiti,serif" font-weight="bold" text-anchor="middle" dominant-baseline="central">${cn}</text>`;
+      }
+    }
+  }
+  layer.innerHTML = h;
+}
+
+function formatTime(timer) {
+  const m = timer.minutes || 0;
+  const s = timer.seconds || 0;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+// Board click handler — uses stored state, no async
+document.getElementById('board-svg').addEventListener('click', function(e) {
+  if (!storeState || storeState.status !== 'running') return;
+  const state = storeState;
+  const board = state.board;
+  const humanTurn = state.last_thought && state.last_thought.includes('等待');
+  if (!humanTurn) return;
+  const side = state.current_side;
+
+  const svg = document.getElementById('board-svg');
+  const rect = svg.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * 520;
+  const y = ((e.clientY - rect.top) / rect.height) * 620;
+
+  // Find nearest cell
+  let bestC = -1, bestR = -1, bestDist = 9999;
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 9; c++) {
+      const d = (x-COL_X[c])*(x-COL_X[c]) + (y-ROW_Y[r])*(y-ROW_Y[r]);
+      if (d < bestDist) { bestDist = d; bestC = c; bestR = r; }
+    }
+  }
+  if (bestDist > 900) return;
+
+  // If piece selected, try to move
+  if (selectedPiece !== null) {
+    const [fc, fr] = selectedPiece;
+    const isLegal = showLegalMoves.some(m => m[0]===fc && m[1]===fr && m[2]===bestC && m[3]===bestR);
+    if (isLegal) { submitHumanMove(fc, fr, bestC, bestR); }
+    selectedPiece = null; showLegalMoves = [];
+    renderBoard(board, null);
+    return;
+  }
+
+  // Select a piece
+  const piece = board[bestR] && board[bestR][bestC];
+  if (!piece) return;
+  const pieceIsRed = piece === piece.toUpperCase();
+  if (side === 'red' && !pieceIsRed) return;
+  if (side === 'black' && pieceIsRed) return;
+
+  // Filter legal moves from cached list
+  const myMoves = showLegalMoves.filter(m => m[0]===bestC && m[1]===bestR);
+  if (myMoves.length === 0) return;
+  selectedPiece = [bestC, bestR];
+  showLegalMoves = myMoves;  // only show moves for selected piece
+  renderBoard(board, null, {selected: selectedPiece, moves: myMoves});
+});
+
+async function submitHumanMove(fc, fr, tc, tr) {
+  try {
+    const res = await fetch('/api/move', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({from:[fc,fr], to:[tc,tr]}),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      alert('走法无效: ' + (data.status || data.message));
+    }
+  } catch (e) { console.error('Move failed:', e); }
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => console.log('WebSocket connected');
+  ws.onmessage = (e) => {
+    const state = JSON.parse(e.data);
+    updateUI(state);
+  };
+  ws.onclose = () => { console.log('WebSocket closed, reconnecting...'); setTimeout(connectWS, 2000); };
+  ws.onerror = (e) => console.log('WebSocket error', e);
+}
+
+function updateUI(state) {
+  storeState = state;  // cache for click handler
+  const board = state.board;
+  lastMove = null;
+  if (state.move_history && state.move_history.length > 0) {
+    const last = state.move_history[state.move_history.length - 1];
+    lastMove = { fc: last.from[0], fr: last.from[1], tc: last.to[0], tr: last.to[1] };
+  }
+  // Preserve highlights during human move selection
+  if (selectedPiece !== null) {
+    renderBoard(board, lastMove, {selected: selectedPiece, moves: showLegalMoves});
+  } else {
+    renderBoard(board, lastMove);
+  }
+  // Auto-fetch legal moves when it's human's turn
+  const humanTurn = state.last_thought && state.last_thought.includes('等待');
+  if (humanTurn && state.status === 'running') {
+    fetch('/api/legal/' + state.current_side).then(r => r.json()).then(d => {
+      showLegalMoves = d.moves || [];
+    });
+  }
+  document.getElementById('move-count').textContent = state.move_count;
+
+  // Timers
+  const redTimer = document.getElementById('red-timer');
+  const blackTimer = document.getElementById('black-timer');
+  redTimer.textContent = formatTime(state.red_timer);
+  blackTimer.textContent = formatTime(state.black_timer);
+  redTimer.className = 'timer' + (state.red_timer.remaining < 60 ? ' warning' : '');
+  blackTimer.className = 'timer' + (state.black_timer.remaining < 60 ? ' warning' : '');
+
+  // Move log
+  const logDiv = document.getElementById('log-entries');
+  let entries = '';
+  for (const m of (state.move_history || [])) {
+    const cls = m.side === 'red' ? 'red' : 'black';
+    entries += `<div class="entry ${cls}">${m.move_num}. ${m.side === 'red' ? '红' : '黑'}: ${m.chinese} (${m.time_used}s)</div>`;
+  }
+  if (state.status === 'finished') {
+    const winner = state.winner === 'red' ? '红方' : state.winner === 'black' ? '黑方' : '和棋';
+    entries += `<div class="entry system">${winner} ${state.winner === 'draw' ? '!' : '获胜!'}</div>`;
+  }
+  if (state.rule_info && state.rule_info.cycle_detected) {
+    entries += `<div class="entry system">⚠️ ${state.rule_info.cycle_violator} 违反棋规: ${state.rule_info.type}</div>`;
+  }
+  if (state.last_thought) {
+    entries += `<div class="entry system" style="color:#888;font-size:10px;word-break:break-all">${state.last_thought.substring(0, 150)}</div>`;
+  }
+  logDiv.innerHTML = entries;
+  logDiv.scrollTop = logDiv.scrollHeight;
+
+  // Player status — detect human turn from backend state
+  const redS = document.getElementById('red-status');
+  const blackS = document.getElementById('black-status');
+  const isHumanTurn = state.last_thought && state.last_thought.includes('等待');
+  if (state.status === 'running') {
+    if (state.current_side === 'red') {
+      redS.textContent = isHumanTurn ? '👆 请走棋' : '思考中...';
+      redS.className = isHumanTurn ? 'status' : 'status thinking';
+      blackS.textContent = '等待中'; blackS.className = 'status';
+    } else {
+      blackS.textContent = isHumanTurn ? '👆 请走棋' : '思考中...';
+      blackS.className = isHumanTurn ? 'status' : 'status thinking';
+      redS.textContent = '等待中'; redS.className = 'status';
+    }
+  } else if (state.status === 'finished') {
+    redS.textContent = state.winner === 'red' ? '🏆 胜利' : '已结束';
+    blackS.textContent = state.winner === 'black' ? '🏆 胜利' : '已结束';
+  } else {
+    redS.textContent = '等待开始'; redS.className = 'status';
+    blackS.textContent = '等待开始'; blackS.className = 'status';
+  }
+
+  document.getElementById('btn-start').disabled = state.status === 'running';
+  document.getElementById('btn-stop').disabled = state.status !== 'running';
+}
+
+async function startGame() {
+  const cfg = loadLocalConfig();
+  const redHuman = cfg.red_is_human || false;
+  const blackHuman = cfg.black_is_human || false;
+  const redOK = redHuman || (cfg.red_url && cfg.red_model && cfg.red_key);
+  const blackOK = blackHuman || (cfg.black_url && cfg.black_model && cfg.black_key);
+  if (!redOK || !blackOK) {
+    alert('请先配置双方（人类玩家打勾，AI需填写API信息）');
+    return;
+  }
+
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        red_base_url: cfg.red_url || '', red_model: cfg.red_model || '', red_api_key: cfg.red_key || '',
+        black_base_url: cfg.black_url || '', black_model: cfg.black_model || '', black_api_key: cfg.black_key || '',
+        move_delay: 2.0,
+        red_is_human: redHuman,
+        black_is_human: blackHuman,
+      }),
+    });
+  } catch (e) { console.error('Failed to send config:', e); }
+
+  const btnStart = document.getElementById('btn-start');
+  const btnStop = document.getElementById('btn-stop');
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+
+  try {
+    const res = await fetch('/api/start', { method: 'POST' });
+    const data = await res.json();
+    console.log('Start result:', data);
+  } catch (e) {
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    console.error('Start failed:', e);
+  }
+}
+async function stopGame() {
+  const btnStart = document.getElementById('btn-start');
+  const btnStop = document.getElementById('btn-stop');
+  btnStop.disabled = true;
+  btnStart.disabled = false;
+  try {
+    const res = await fetch('/api/stop', { method: 'POST' });
+    console.log('Stop result:', await res.json());
+  } catch (e) {
+    btnStart.disabled = true;
+    btnStop.disabled = false;
+    console.error('Stop failed:', e);
+  }
+}
+async function resetGame() {
+  const res = await fetch('/api/reset', { method: 'POST' });
+  console.log('Reset result:', await res.json());
+}
+function saveConfig() {
+  const cfg = {
+    black_base_url: document.getElementById('black-url').value,
+    black_model: document.getElementById('black-model').value,
+    black_api_key: document.getElementById('black-key').value,
+    red_base_url: document.getElementById('red-url').value,
+    red_model: document.getElementById('red-model').value,
+    red_api_key: document.getElementById('red-key').value,
+    move_delay: 2.0,
+    red_is_human: document.getElementById('red-human').checked,
+    black_is_human: document.getElementById('black-human').checked,
+  };
+  saveLocalConfig();
+  fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg),
+  }).then(r => r.json()).then(d => console.log('Config saved:', d));
+  document.getElementById('red-model-display').textContent = cfg.red_is_human ? '人类玩家' : (cfg.red_model || '未配置');
+  document.getElementById('black-model-display').textContent = cfg.black_is_human ? '人类玩家' : (cfg.black_model || '未配置');
+}
+
+// ---- Game Record Modal ----
+let gameRecordState = { moves: [], boards: [], currentIdx: -1 };
+
+function showGameRecord() {
+  fetch('/api/state')
+    .then(r => r.json())
+    .then(state => {
+      gameRecordState.moves = state.move_history || [];
+      gameRecordState.boards = [];
+
+      // Reconstruct board states from move history
+      // Start with initial board
+      let board = [
+        ['r','n','b','a','k','a','b','n','r'],
+        [null,null,null,null,null,null,null,null,null],
+        [null,'c',null,null,null,null,null,'c',null],
+        ['p',null,'p',null,'p',null,'p',null,'p'],
+        [null,null,null,null,null,null,null,null,null],
+        [null,null,null,null,null,null,null,null,null],
+        ['P',null,'P',null,'P',null,'P',null,'P'],
+        [null,'C',null,null,null,null,null,'C',null],
+        [null,null,null,null,null,null,null,null,null],
+        ['R','N','B','A','K','A','B','N','R'],
+      ];
+      gameRecordState.boards.push(board.map(r => [...r])); // initial state
+
+      // Apply each move to build board states
+      for (const m of gameRecordState.moves) {
+        const [fc, fr] = m.from;
+        const [tc, tr] = m.to;
+        board[tr][tc] = board[fr][fc];
+        board[fr][fc] = null;
+        gameRecordState.boards.push(board.map(r => [...r]));
+      }
+
+      gameRecordState.currentIdx = gameRecordState.boards.length - 1;
+      renderGameRecord();
+      document.getElementById('record-modal').classList.add('active');
+    });
+}
+
+function renderGameRecord() {
+  const { moves, boards, currentIdx } = gameRecordState;
+
+  // Render move list
+  const listEl = document.getElementById('record-list');
+  let html = '';
+  for (let i = 0; i < moves.length; i++) {
+    const m = moves[i];
+    const cls = i === currentIdx - 1 ? ' active' : '';
+    const sideLabel = m.side === 'red' ? '红' : '黑';
+    html += `<div class="record-item${cls}" onclick="recordJump(${i + 1})">
+      <span class="move-num">${m.move_num}.</span>
+      <span class="move-text">${sideLabel}: ${m.chinese}</span>
+    </div>`;
+  }
+  listEl.innerHTML = html;
+  listEl.scrollTop = listEl.scrollHeight;
+
+  // Render board at current index
+  renderRecordBoard(currentIdx);
+
+  // Update info
+  const infoEl = document.getElementById('record-info');
+  if (currentIdx === 0) {
+    infoEl.textContent = '初始局面';
+  } else {
+    const m = moves[currentIdx - 1];
+    const sideLabel = m.side === 'red' ? '红方' : '黑方';
+    infoEl.textContent = `第${m.move_num}手 ${sideLabel}: ${m.chinese} (${m.time_used}s)`;
+  }
+
+  // Update nav buttons
+  document.getElementById('btn-prev').disabled = currentIdx <= 0;
+  document.getElementById('btn-next').disabled = currentIdx >= boards.length - 1;
+}
+
+function renderRecordBoard(idx) {
+  const board = gameRecordState.boards[idx];
+  const COL_X_R = [50,95,140,185,230,275,320,365,410];
+  const ROW_Y_R = [40,85,130,175,220,265,310,355,400,445];
+
+  // Draw grid
+  const gridG = document.getElementById('record-grid');
+  let h = '';
+  for (let i = 0; i < 10; i++) {
+    let sw = (i === 4 || i === 5) ? 2 : 1.2;
+    h += `<line x1="50" y1="${ROW_Y_R[i]}" x2="410" y2="${ROW_Y_R[i]}" stroke="#4a2f1a" stroke-width="${sw}"/>`;
+  }
+  h += `<line x1="50" y1="40" x2="50" y2="445" stroke="#4a2f1a" stroke-width="2"/>`;
+  h += `<line x1="410" y1="40" x2="410" y2="445" stroke="#4a2f1a" stroke-width="2"/>`;
+  for (let ci = 1; ci <= 7; ci++) {
+    h += `<line x1="${COL_X_R[ci]}" y1="40" x2="${COL_X_R[ci]}" y2="220" stroke="#4a2f1a" stroke-width="1"/>`;
+    h += `<line x1="${COL_X_R[ci]}" y1="265" x2="${COL_X_R[ci]}" y2="445" stroke="#4a2f1a" stroke-width="1"/>`;
+  }
+  h += `<line x1="185" y1="40" x2="275" y2="130" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="275" y1="40" x2="185" y2="130" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="185" y1="355" x2="275" y2="445" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<line x1="275" y1="355" x2="185" y2="445" stroke="#4a2f1a" stroke-width="1.2"/>`;
+  h += `<text x="145" y="250" font-size="20" fill="#4a2f1a" font-family="KaiTi,STKaiti,serif" font-weight="bold">楚 河</text>`;
+  h += `<text x="275" y="250" font-size="20" fill="#4a2f1a" font-family="KaiTi,STKaiti,serif" font-weight="bold">汉 界</text>`;
+  gridG.innerHTML = h;
+
+  // Draw pieces
+  const pieceG = document.getElementById('record-pieces');
+  let ph = '';
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 9; c++) {
+      const piece = board[r] && board[r][c];
+      if (piece) {
+        const x = COL_X_R[c], y = ROW_Y_R[r];
+        const isRed = piece === piece.toUpperCase();
+        const stroke = isRed ? '#cc0000' : '#1a1a1a';
+        const textCol = isRed ? '#cc0000' : '#1a1a1a';
+        const cn = CHINESE[piece] || piece;
+        ph += `<circle cx="${x}" cy="${y}" r="15" fill="#f5e6c8" stroke="${stroke}" stroke-width="2"/>`;
+        ph += `<text x="${x}" y="${y}" font-size="14" fill="${textCol}" font-family="KaiTi,STKaiti,serif" font-weight="bold" text-anchor="middle" dominant-baseline="central">${cn}</text>`;
+      }
+    }
+  }
+  pieceG.innerHTML = ph;
+}
+
+function recordJump(idx) {
+  gameRecordState.currentIdx = idx;
+  renderGameRecord();
+}
+function recordPrev() {
+  if (gameRecordState.currentIdx > 0) {
+    gameRecordState.currentIdx--;
+    renderGameRecord();
+  }
+}
+function recordNext() {
+  if (gameRecordState.currentIdx < gameRecordState.boards.length - 1) {
+    gameRecordState.currentIdx++;
+    renderGameRecord();
+  }
+}
+
+function closeGameRecord() {
+  document.getElementById('record-modal').classList.remove('active');
+}
+
+// ---- Debug Modal (AI conversations) ----
+let debugCurrentSide = null;
+
+async function showDebugModal(side) {
+  debugCurrentSide = side;
+  const modal = document.getElementById('debug-modal');
+  modal.classList.add('active');
+  const title = document.getElementById('modal-title-debug');
+  title.textContent = debugCurrentSide === 'red' ? '🔴 红方 AI 后台对话' : '⚫ 黑方 AI 后台对话';
+
+  try {
+    const [res, stateRes] = await Promise.all([
+      fetch(`/api/debug/conversations/${debugCurrentSide}`),
+      fetch('/api/state')
+    ]);
+    const data = await res.json();
+    const state = await stateRes.json();
+    const isCurrentSide = state.current_side === debugCurrentSide && state.status === 'running';
+
+    let html = '';
+    if (isCurrentSide) {
+      const timerKey = debugCurrentSide === 'red' ? 'red_timer' : 'black_timer';
+      const t = state[timerKey];
+      html += `<div style="padding:8px 12px;margin-bottom:8px;background:#2d6a4f;border-radius:6px;font-size:12px;color:#a7f3d0">
+         ⚡ 实时：${debugCurrentSide === 'red' ? '红方' : '黑方'} 正在思考中... | 剩余时间: ${String(t.minutes).padStart(2,'0')}:${String(t.seconds).padStart(2,'0')}
+      </div>`;
+    }
+
+    if (data.count === 0) {
+      html += '<p>暂无对话记录</p>';
+    } else {
+      for (const conv of data.conversations) {
+        const isLatest = conv.index === data.count - 1 && isCurrentSide;
+        const hl = isLatest ? 'border:1px solid #e2b857;' : '';
+        html += `<div class="conv-entry" style="${hl}">`;
+        html += `<div class="header">第 ${conv.index + 1} 次对话${isLatest ? ' <span style="color:#e2b857">● 最新</span>' : ''}</div>`;
+        html += `<div class="prompt"><strong>Prompt:</strong>\n${JSON.stringify(conv.messages, null, 2)}</div>`;
+        html += `<div class="response"><strong>AI 响应:</strong>\n${conv.response}</div>`;
+        html += `<div class="result"><strong>走法解析:</strong> ${conv.move_result}</div>`;
+        html += `</div>`;
+      }
+    }
+    document.getElementById('modal-body').innerHTML = html;
+  } catch (e) {
+    document.getElementById('modal-body').innerHTML = '<p style="color:#e74c3c">加载失败</p>';
+  }
+}
+
+function closeDebugModal() {
+  document.getElementById('debug-modal').classList.remove('active');
+  debugCurrentSide = null;
+}
+
+applyConfigToUI(loadLocalConfig());
+drawGrid();
+// Show initial board immediately (before API/WebSocket respond)
+(function showInitialBoard() {
+  const initial = [
+    ['r','n','b','a','k','a','b','n','r'],[null,null,null,null,null,null,null,null,null],
+    [null,'c',null,null,null,null,null,'c',null],['p',null,'p',null,'p',null,'p',null,'p'],
+    [null,null,null,null,null,null,null,null,null],[null,null,null,null,null,null,null,null,null],
+    ['P',null,'P',null,'P',null,'P',null,'P'],[null,'C',null,null,null,null,null,'C',null],
+    [null,null,null,null,null,null,null,null,null],['R','N','B','A','K','A','B','N','R']
+  ];
+  renderBoard(initial, null);
+})();
+// Then update with real state
+fetch('/api/state').then(r => r.json()).then(s => updateUI(s)).catch(() => {});
+connectWS();
+
+// Auto-send localStorage config to backend on page load
+async function loadConfigOnStartup() {
+  const cfg = loadLocalConfig();
+  if (!cfg.red_url || !cfg.red_model || !cfg.red_key ||
+      !cfg.black_url || !cfg.black_model || !cfg.black_key) return;
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        red_base_url: cfg.red_url,
+        red_model: cfg.red_model,
+        red_api_key: cfg.red_key,
+        black_base_url: cfg.black_url,
+        black_model: cfg.black_model,
+        black_api_key: cfg.black_key,
+        move_delay: 2.0,
+      }),
+    });
+    console.log('Config auto-loaded from localStorage');
+  } catch (e) {
+    console.error('Failed to auto-load config:', e);
+  }
+}
+loadConfigOnStartup();
+
+// 1FPS timer update (independent of WebSocket broadcast)
+// Uses self-rescheduling setTimeout to prevent request pileup
+async function pollTimers() {
+  try {
+    const res = await fetch('/api/state');
+    const state = await res.json();
+    const redTimer = document.getElementById('red-timer');
+    const blackTimer = document.getElementById('black-timer');
+    if (redTimer) redTimer.textContent = formatTime(state.red_timer);
+    if (blackTimer) blackTimer.textContent = formatTime(state.black_timer);
+    if (redTimer) redTimer.className = 'timer' + (state.red_timer.remaining < 60 ? ' warning' : '');
+    if (blackTimer) blackTimer.className = 'timer' + (state.black_timer.remaining < 60 ? ' warning' : '');
+  } catch {}
+  setTimeout(pollTimers, 1000);
+}
+pollTimers();
+</script>
+</body>
+</html>
