@@ -46,16 +46,28 @@ class ToolCallingAgent:
         self.max_iterations = max_iterations
         self.time_budget = time_budget
 
-    async def run(self, context: AgentContext) -> AgentResult:
+    async def run(self, context: AgentContext, on_delta=None) -> AgentResult:
         messages = [
             {"role": "system", "content": build_agent_system_prompt(context)},
             {"role": "user", "content": build_agent_user_message(context)},
         ]
 
+        start = time.time()
+        urged = False
         for iteration in range(self.max_iterations):
+            # Soft deadline: past budget, urge immediate submission (once), then bail
+            if self.time_budget and time.time() - start > self.time_budget:
+                if urged or iteration > 0:
+                    break
+                urged = True
+                messages.append({
+                    "role": "user",
+                    "content": "⏰ 时间紧张！请立即调用 submit_move 提交当前最佳走法，不要再推演。",
+                })
+
             try:
                 response: AIResponse = await self.client.chat_with_tools(
-                    messages, TOOL_SCHEMAS,
+                    messages, TOOL_SCHEMAS, on_delta=on_delta,
                 )
             except Exception as e:
                 err_msg = str(e)

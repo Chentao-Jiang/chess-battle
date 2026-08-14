@@ -89,6 +89,12 @@ class GameConfig:
     black_max_tokens: int = 0
     red_temperature: float = 0.7
     black_temperature: float = 0.7
+    # Thinking-mode control per side: "auto" (model default) / "on" / "off"
+    red_thinking: str = "auto"
+    black_thinking: str = "auto"
+    # Reasoning effort: "low" / "medium" / "high" (mapping is model-family dependent)
+    red_effort: str = "medium"
+    black_effort: str = "medium"
 
 
 def auto_max_tokens(model: str) -> int:
@@ -205,4 +211,6 @@ class GameState:
             },
             'red_memory': self.red_memory.to_dict(),
             'black_memory': self.black_memory.to_dict(),
+            'red_prethought': self.red_prethought,
+            'black_prethought': self.black_prethought,
         }

@@ -60,6 +60,12 @@ class ConfigRequest(BaseModel):
     black_is_human: bool = False
     red_max_tokens: int = 0
     black_max_tokens: int = 0
+    red_temperature: float = 0.7
+    black_temperature: float = 0.7
+    red_thinking: str = "auto"
+    black_thinking: str = "auto"
+    red_effort: str = "medium"
+    black_effort: str = "medium"
 
 
 @app.post("/api/config")
@@ -79,6 +85,12 @@ async def set_config(cfg: ConfigRequest):
         black_is_human=cfg.black_is_human,
         red_max_tokens=red_mt,
         black_max_tokens=black_mt,
+        red_temperature=cfg.red_temperature,
+        black_temperature=cfg.black_temperature,
+        red_thinking=cfg.red_thinking,
+        black_thinking=cfg.black_thinking,
+        red_effort=cfg.red_effort,
+        black_effort=cfg.black_effort,
     )
     return {"status": "ok"}
 

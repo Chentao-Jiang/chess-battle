@@ -144,7 +144,18 @@ class BattleController:
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ]
-            response = await asyncio.wait_for(client.chat(messages), timeout=30)
+
+            acc = []
+
+            async def _pt_delta(kind, text):
+                acc.append(text)
+                if side == RED:
+                    self.state.red_prethought = f"{side_name}预分析：{''.join(acc)[-300:]}"
+                else:
+                    self.state.black_prethought = f"{side_name}预分析：{''.join(acc)[-300:]}"
+
+            response = await asyncio.wait_for(
+                client.chat(messages, on_delta=_pt_delta), timeout=60)
 
             if side == RED:
                 self.state.red_prethought = f"{side_name}预分析：{response[:300]}"
@@ -269,16 +280,14 @@ class BattleController:
                         await asyncio.sleep(2)
                         continue
 
-                    mt = self.state.config.red_max_tokens if side == RED else self.state.config.black_max_tokens
-                    if mt <= 0:
-                        mt = auto_max_tokens(model)
-                    temp = self.state.config.red_temperature if side == RED else self.state.config.black_temperature
-                    client = AIClient(base_url, model, api_key, mt, temperature=temp)
+                    client = self._side_client(side, timer)
                     move_start = time.time()
 
-                    prethought = self._collect_prethought(side)
+                    # Low clock: skip prethought injection and use fast single-shot mode
+                    fast_mode = timer.remaining < 45
+                    prethought = "" if timer.remaining < 120 else self._collect_prethought(side)
                     fc, fr, tc, tr, conv, parsed = await self._get_ai_move(
-                        client, side, prethought=prethought,
+                        client, side, prethought=prethought, fast_mode=fast_mode,
                     )
                     move_duration = time.time() - move_start
 
@@ -359,8 +368,10 @@ class BattleController:
                 # Switch sides
                 self.state.current_side = RED if side == BLACK else BLACK
 
-                # Launch background analysis for the idle side (the side that just moved)
-                self._start_background_analysis(side)
+                # Launch background analysis for the idle side (skip when its clock is low)
+                idle_timer = self.state.black_timer if side == RED else self.state.red_timer
+                if idle_timer.remaining >= 120:
+                    self._start_background_analysis(side)
 
                 # Wait for configured delay
                 await asyncio.sleep(self.state.config.move_delay)
@@ -374,13 +385,61 @@ class BattleController:
                 self._running = False
                 break
 
-    async def _get_ai_move(self, client: AIClient, side, max_retries=3, prethought: str = ""):
+    def _make_delta_reporter(self, side):
+        """Create an on_delta callback that streams model output into state.last_thought.
+
+        The existing 0.5s full-state WebSocket broadcast picks this up, so the
+        frontend sees thinking/content live without a new message protocol.
+        """
+        state = self.state
+        side_name = '红方' if side == RED else '黑方'
+        buf = {"reasoning": [], "content": []}
+        last_emit = 0.0
+
+        async def report(kind: str, text: str):
+            nonlocal last_emit
+            buf.setdefault(kind, []).append(text)
+            now = time.time()
+            if now - last_emit < 0.4:
+                return
+            last_emit = now
+            parts = []
+            if buf["reasoning"]:
+                parts.append("🤔 " + "".join(buf["reasoning"])[-350:])
+            if buf["content"]:
+                parts.append("💬 " + "".join(buf["content"])[-150:])
+            state.last_thought = f"[{side_name}实时] " + " | ".join(parts)
+
+        return report
+
+    def _side_client(self, side, timer) -> AIClient:
+        """Build AIClient with per-side thinking/effort settings and low-time downgrades."""
+        config = self.state.config
+        base_url = config.red_base_url if side == RED else config.black_base_url
+        api_key = config.red_api_key if side == RED else config.black_api_key
+        model = config.red_model if side == RED else config.black_model
+        mt = config.red_max_tokens if side == RED else config.black_max_tokens
+        if mt <= 0:
+            mt = auto_max_tokens(model)
+        temp = config.red_temperature if side == RED else config.black_temperature
+        thinking = config.red_thinking if side == RED else config.black_thinking
+        effort = config.red_effort if side == RED else config.black_effort
+        # Low clock: cut reasoning depth to avoid losing on time
+        if timer.remaining < 120:
+            effort = "low"
+        return AIClient(base_url, model, api_key, mt, temperature=temp,
+                        thinking=thinking, effort=effort)
+
+    async def _get_ai_move(self, client: AIClient, side, max_retries=3, prethought: str = "",
+                           fast_mode: bool = False):
         """Get AI move. NO per-move timeouts — only total clock matters.
+        fast_mode (very low clock) skips the multi-round agent phase entirely.
         Returns (fc,fr,tc,tr,conv,parsed)."""
         timer = self.state.red_timer if side == RED else self.state.black_timer
         memory = self.state.red_memory if side == RED else self.state.black_memory
         legal_moves = all_legal_moves(self.state.board, side)
         last_error = ""
+        on_delta = self._make_delta_reporter(side)
 
         move_history_data = [
             {'move_num': m.move_num, 'side': m.side, 'chinese': m.chinese,
@@ -388,47 +447,52 @@ class BattleController:
             for m in self.state.move_history
         ]
 
-        # === Phase 1: Agent with tools (primary) ===
+        # === Phase 1: Agent with tools (primary; skipped in fast_mode) ===
         model = self.state.config.red_model if side == RED else self.state.config.black_model
-        try:
-            agent_ctx = AgentContext(
-                board=self.state.board, side=side, move_count=self.state.move_count,
-                memory=memory, prethought=prethought, legal_moves=legal_moves,
-                move_history=move_history_data, remaining_seconds=timer.remaining,
-                model=model,
-            )
-            agent = ToolCallingAgent(client=client, max_iterations=5, time_budget=99999)
-            agent_result = await agent.run(agent_ctx)
+        if fast_mode:
+            last_error = "剩余时间过少，跳过Agent阶段直接轻量出招"
+        else:
+            try:
+                agent_ctx = AgentContext(
+                    board=self.state.board, side=side, move_count=self.state.move_count,
+                    memory=memory, prethought=prethought, legal_moves=legal_moves,
+                    move_history=move_history_data, remaining_seconds=timer.remaining,
+                    model=model,
+                )
+                # Keep at least ~90s on the clock for the agent phase
+                budget = max(60.0, timer.remaining - 90)
+                agent = ToolCallingAgent(client=client, max_iterations=5, time_budget=budget)
+                agent_result = await agent.run(agent_ctx, on_delta=on_delta)
 
-            if agent_result.mode == "agent" and agent_result.fc is not None:
-                fc, fr, tc, tr = agent_result.fc, agent_result.fr, agent_result.tc, agent_result.tr
-                if 0 <= fc < 9 and 0 <= fr < 10 and 0 <= tc < 9 and 0 <= tr < 10:
-                    conv = AIConversation(
-                        messages=agent_result.messages,
-                        response=f"[Agent] {agent_result.parsed}",
-                        move_result=f"Agent: ({fc},{fr})→({tc},{tr})",
-                        timestamp=time.time(),
-                    )
-                    return (fc, fr, tc, tr, conv, agent_result.parsed)
-                last_error = "Agent坐标越界"
-            elif agent_result.fallback_text:
-                parsed = parse_move_response(agent_result.fallback_text)
-                if parsed:
-                    fc, fr, tc, tr = parsed['fc'], parsed['fr'], parsed['tc'], parsed['tr']
+                if agent_result.mode == "agent" and agent_result.fc is not None:
+                    fc, fr, tc, tr = agent_result.fc, agent_result.fr, agent_result.tc, agent_result.tr
                     if 0 <= fc < 9 and 0 <= fr < 10 and 0 <= tc < 9 and 0 <= tr < 10:
                         conv = AIConversation(
                             messages=agent_result.messages,
-                            response=agent_result.fallback_text,
-                            move_result=f"({fc},{fr})→({tc},{tr})",
+                            response=f"[Agent] {agent_result.parsed}",
+                            move_result=f"Agent: ({fc},{fr})→({tc},{tr})",
                             timestamp=time.time(),
                         )
-                        return (fc, fr, tc, tr, conv, parsed)
-                last_error = "Agent无法解析"
-            else:
-                last_error = f"Agent: {agent_result.error or 'failed'}"
-        except Exception as e:
-            logger.warning(f"Agent failed: {e}")
-            last_error = f"Agent异常: {str(e)[:80]}"
+                        return (fc, fr, tc, tr, conv, agent_result.parsed)
+                    last_error = "Agent坐标越界"
+                elif agent_result.fallback_text:
+                    parsed = parse_move_response(agent_result.fallback_text)
+                    if parsed:
+                        fc, fr, tc, tr = parsed['fc'], parsed['fr'], parsed['tc'], parsed['tr']
+                        if 0 <= fc < 9 and 0 <= fr < 10 and 0 <= tc < 9 and 0 <= tr < 10:
+                            conv = AIConversation(
+                                messages=agent_result.messages,
+                                response=agent_result.fallback_text,
+                                move_result=f"({fc},{fr})→({tc},{tr})",
+                                timestamp=time.time(),
+                            )
+                            return (fc, fr, tc, tr, conv, parsed)
+                    last_error = "Agent无法解析"
+                else:
+                    last_error = f"Agent: {agent_result.error or 'failed'}"
+            except Exception as e:
+                logger.warning(f"Agent failed: {e}")
+                last_error = f"Agent异常: {str(e)[:80]}"
 
         # === Phase 2: Passive fallback (no tools) ===
         memory_context = memory.to_context()
@@ -441,7 +505,7 @@ class BattleController:
                     timer.remaining, last_error, legal_moves, knowledge,
                     memory_context=memory_context, prethought=prethought, model=model,
                 )
-                response = await client.chat(messages)
+                response = await client.chat(messages, on_delta=on_delta)
                 last_conv = AIConversation(
                     messages=messages, response=response, timestamp=time.time(),
                 )

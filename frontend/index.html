@@ -20,7 +20,7 @@
   .board-section { flex:1; display:flex; justify-content:center; }
   #board-svg { cursor:pointer; }
   #pieces-layer circle, #pieces-layer text { pointer-events:none; }
-  .side-panel { width:300px; display:flex; flex-direction:column; gap:12px; }
+  .side-panel { width:330px; display:flex; flex-direction:column; gap:12px; }
   .player-card { background:#16213e; padding:12px; border-radius:8px; }
   .player-card.black { border-left:4px solid #555; }
   .player-card.red { border-left:4px solid #cc0000; }
@@ -36,12 +36,22 @@
   .move-log .entry.red { color:#ff6b6b; }
   .move-log .entry.black { color:#74b9ff; }
   .move-log .entry.system { color:#fdcb6e; }
-  .config-panel { background:#16213e; padding:12px; border-radius:8px; }
-  .config-panel h3 { font-size:14px; color:#e2b857; margin-bottom:8px; }
-  .config-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .config-panel { background:#16213e; padding:14px; border-radius:8px; border:1px solid #2a2a4a; }
+  .config-panel h3 { font-size:14px; color:#e2b857; margin-bottom:10px; }
+  .config-grid { display:flex; flex-direction:column; gap:10px; }
+  .config-group { min-width:0; overflow:hidden; background:#0d1b2a; border-radius:8px; padding:10px; border:1px solid #223355; }
   .config-group label { display:block; font-size:10px; color:#888; margin-bottom:2px; }
-  .config-group input { width:100%; padding:4px 6px; border:1px solid #333; border-radius:4px; background:#0d1b2a; color:#eee; font-size:11px; }
-  .btn-save { width:100%; margin-top:8px; background:#3498db; }
+  .config-group input, .config-group select {
+    width:100%; max-width:100%; min-width:0; padding:6px 8px; border:1px solid #334; border-radius:6px;
+    background:#101b30; color:#eee; font-size:12px; margin-top:4px;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  .config-group input:focus, .config-group select:focus {
+    outline:none; border-color:#e2b857; box-shadow:0 0 0 2px rgba(226,184,87,.2);
+  }
+  .config-group select { cursor:pointer; }
+  .btn-save { width:100%; margin-top:10px; background:#3498db; padding:8px; border-radius:6px; }
+  .btn-save:hover { background:#2980b9; }
   .debug-btn-row { display:flex; gap:8px; margin-top:4px; }
   .btn-view-debug { font-size:10px; padding:3px 8px; background:#6c3483; color:#fff; border:none; border-radius:4px; cursor:pointer; }
 
@@ -114,10 +124,22 @@
             </label>
           </div>
           <div id="red-ai-fields">
-            <div style="font-size:13px;font-weight:bold;color:#ff6b6b;margin-bottom:4px">🔴 AI玩家配置:</div>
+            <div style="font-size:12px;font-weight:bold;color:#ff6b6b;margin-bottom:6px">🔴 AI玩家配置</div>
             <input id="red-url" placeholder="https://api.openai.com" value="https://api.openai.com">
             <input id="red-model" placeholder="模型名称" style="margin-top:3px">
             <input id="red-key" type="password" placeholder="API Key" style="margin-top:3px">
+            <div style="display:flex;gap:4px;margin-top:3px">
+              <select id="red-thinking" style="flex:1;font-size:12px;padding:3px">
+                <option value="auto">🧠思考:模型默认</option>
+                <option value="on">🧠思考:开启</option>
+                <option value="off">🧠思考:关闭</option>
+              </select>
+              <select id="red-effort" style="flex:1;font-size:12px;padding:3px">
+                <option value="low">强度:低</option>
+                <option value="medium" selected>强度:中</option>
+                <option value="high">强度:高</option>
+              </select>
+            </div>
           </div>
           <div id="red-human-label" style="display:none;font-size:13px;font-weight:bold;color:#ff6b6b;padding:4px 0">🔴 人类玩家</div>
         </div>
@@ -128,10 +150,22 @@
             </label>
           </div>
           <div id="black-ai-fields">
-            <div style="font-size:13px;font-weight:bold;color:#74b9ff;margin-bottom:4px">⚫ AI玩家配置:</div>
+            <div style="font-size:12px;font-weight:bold;color:#74b9ff;margin-bottom:6px">⚫ AI玩家配置</div>
             <input id="black-url" placeholder="https://api.example.com">
             <input id="black-model" placeholder="模型名称" style="margin-top:3px">
             <input id="black-key" type="password" placeholder="API Key" style="margin-top:3px">
+            <div style="display:flex;gap:4px;margin-top:3px">
+              <select id="black-thinking" style="flex:1;font-size:12px;padding:3px">
+                <option value="auto">🧠思考:模型默认</option>
+                <option value="on">🧠思考:开启</option>
+                <option value="off">🧠思考:关闭</option>
+              </select>
+              <select id="black-effort" style="flex:1;font-size:12px;padding:3px">
+                <option value="low">强度:低</option>
+                <option value="medium" selected>强度:中</option>
+                <option value="high">强度:高</option>
+              </select>
+            </div>
           </div>
           <div id="black-human-label" style="display:none;font-size:13px;font-weight:bold;color:#74b9ff;padding:4px 0">⚫ 人类玩家</div>
         </div>
@@ -225,6 +259,10 @@ function saveLocalConfig() {
     black_key: document.getElementById('black-key').value,
     red_is_human: document.getElementById('red-human').checked,
     black_is_human: document.getElementById('black-human').checked,
+    red_thinking: document.getElementById('red-thinking').value,
+    red_effort: document.getElementById('red-effort').value,
+    black_thinking: document.getElementById('black-thinking').value,
+    black_effort: document.getElementById('black-effort').value,
   }));
 }
 function toggleHuman(side) {
@@ -241,6 +279,10 @@ function applyConfigToUI(cfg) {
   if (cfg.black_url) document.getElementById('black-url').value = cfg.black_url;
   if (cfg.black_model) document.getElementById('black-model').value = cfg.black_model;
   if (cfg.black_key) document.getElementById('black-key').value = cfg.black_key;
+  if (cfg.red_thinking) document.getElementById('red-thinking').value = cfg.red_thinking;
+  if (cfg.red_effort) document.getElementById('red-effort').value = cfg.red_effort;
+  if (cfg.black_thinking) document.getElementById('black-thinking').value = cfg.black_thinking;
+  if (cfg.black_effort) document.getElementById('black-effort').value = cfg.black_effort;
   document.getElementById('red-model-display').textContent = cfg.red_is_human ? '人类玩家' : (cfg.red_model || '未配置');
   document.getElementById('black-model-display').textContent = cfg.black_is_human ? '人类玩家' : (cfg.black_model || '未配置');
 }
@@ -497,6 +539,7 @@ async function startGame() {
         move_delay: 2.0,
         red_is_human: redHuman,
         black_is_human: blackHuman,
+        ...thinkingFieldsFromUI(),
       }),
     });
   } catch (e) { console.error('Failed to send config:', e); }
@@ -534,6 +577,14 @@ async function resetGame() {
   const res = await fetch('/api/reset', { method: 'POST' });
   console.log('Reset result:', await res.json());
 }
+function thinkingFieldsFromUI() {
+  return {
+    red_thinking: document.getElementById('red-thinking').value,
+    red_effort: document.getElementById('red-effort').value,
+    black_thinking: document.getElementById('black-thinking').value,
+    black_effort: document.getElementById('black-effort').value,
+  };
+}
 function saveConfig() {
   const cfg = {
     black_base_url: document.getElementById('black-url').value,
@@ -545,6 +596,10 @@ function saveConfig() {
     move_delay: 2.0,
     red_is_human: document.getElementById('red-human').checked,
     black_is_human: document.getElementById('black-human').checked,
+    red_thinking: document.getElementById('red-thinking').value,
+    red_effort: document.getElementById('red-effort').value,
+    black_thinking: document.getElementById('black-thinking').value,
+    black_effort: document.getElementById('black-effort').value,
   };
   saveLocalConfig();
   fetch('/api/config', {
@@ -723,7 +778,7 @@ async function showDebugModal(side) {
     if (isCurrentSide) {
       const timerKey = debugCurrentSide === 'red' ? 'red_timer' : 'black_timer';
       const t = state[timerKey];
-      html += `<div style="padding:8px 12px;margin-bottom:8px;background:#2d6a4f;border-radius:6px;font-size:12px;color:#a7f3d0">
+      html += `<div id="live-thought" style="padding:8px 12px;margin-bottom:8px;background:#2d6a4f;border-radius:6px;font-size:12px;color:#a7f3d0;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow-y:auto">
          ⚡ 实时：${debugCurrentSide === 'red' ? '红方' : '黑方'} 正在思考中... | 剩余时间: ${String(t.minutes).padStart(2,'0')}:${String(t.seconds).padStart(2,'0')}
       </div>`;
     }
@@ -743,6 +798,7 @@ async function showDebugModal(side) {
       }
     }
     document.getElementById('modal-body').innerHTML = html;
+    if (isCurrentSide) startLiveThought(debugCurrentSide);
   } catch (e) {
     document.getElementById('modal-body').innerHTML = '<p style="color:#e74c3c">加载失败</p>';
   }
@@ -751,6 +807,32 @@ async function showDebugModal(side) {
 function closeDebugModal() {
   document.getElementById('debug-modal').classList.remove('active');
   debugCurrentSide = null;
+  if (liveThoughtTimer) { clearInterval(liveThoughtTimer); liveThoughtTimer = null; }
+}
+
+// Live streaming thought ticker: refreshes the live block from the WebSocket state cache
+let liveThoughtTimer = null;
+let liveThoughtText = '';
+function startLiveThought(side) {
+  if (liveThoughtTimer) clearInterval(liveThoughtTimer);
+  liveThoughtText = '';
+  liveThoughtTimer = setInterval(() => {
+    const el = document.getElementById('live-thought');
+    if (!el || !storeState) return;
+    const isThinking = storeState.current_side === side && storeState.status === 'running';
+    const lt = storeState.last_thought || '';
+    const pt = (side === 'red' ? storeState.red_prethought : storeState.black_prethought) || '';
+    const text = (lt && lt.startsWith('[')) ? lt : (pt ? '💬 ' + pt : lt);
+    if (text && text !== liveThoughtText) {
+      liveThoughtText = text;
+      const sideName = side === 'red' ? '红方' : '黑方';
+      const t = (side === 'red' ? storeState.red_timer : storeState.black_timer) || {};
+      el.innerHTML = `⚡ 实时${isThinking ? '' : '（等待中）'}：<br>` +
+        text.replace(/&/g,'&amp;').replace(/</g,'&lt;') +
+        (isThinking ? `<br>⏱ 剩余 ${String(t.minutes||0).padStart(2,'0')}:${String(t.seconds||0).padStart(2,'0')}` : '');
+      el.scrollTop = el.scrollHeight;
+    }
+  }, 700);
 }
 
 applyConfigToUI(loadLocalConfig());
@@ -787,6 +869,7 @@ async function loadConfigOnStartup() {
         black_model: cfg.black_model,
         black_api_key: cfg.black_key,
         move_delay: 2.0,
+        ...thinkingFieldsFromUI(),
       }),
     });
     console.log('Config auto-loaded from localStorage');
